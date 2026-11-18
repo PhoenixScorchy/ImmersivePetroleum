@@ -10,19 +10,21 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ColumnPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.storage.DimensionDataStorage;
 import net.neoforged.neoforge.event.level.LevelEvent;
+import net.neoforged.neoforge.server.ServerLifecycleHooks;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.io.File;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Manager for {@link RegionData}s
@@ -54,7 +56,7 @@ public class ReservoirRegionDataStorage extends SavedData{
 	// -----------------------------------------------------------------------------
 	
 	/** Contains existing reservoir-region files */
-	final Map<RegionPos, RegionData> regions = new HashMap<>();
+	final Map<RegionPos, RegionData> regions = new ConcurrentHashMap<>();
 	final DimensionDataStorage dimData;
 	public ReservoirRegionDataStorage(DimensionDataStorage dimData){
 		this.dimData = dimData;
@@ -198,10 +200,27 @@ public class ReservoirRegionDataStorage extends SavedData{
 	}
 	
 	private RegionData getOrCreateRegionData(RegionPos regionPos){
+		RegionData existing = this.regions.get(regionPos);
+		if(existing != null)
+			return existing;
+		
 		synchronized(this.regions){
 			RegionData ret = this.regions.computeIfAbsent(regionPos, pos -> {
 				String fn = getRegionFileName(pos);
-				RegionData data = this.dimData.computeIfAbsent(new Factory<>(() -> new RegionData(pos), (t, p) -> new RegionData(pos, t, p)), fn);
+				Factory<RegionData> factory = new Factory<>(() -> new RegionData(pos), (t, p) -> new RegionData(pos, t, p));
+				MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+				RegionData data;
+				if(server == null || server.isSameThread()){
+					data = this.dimData.computeIfAbsent(factory, fn);
+				}else{
+					data = new RegionData(pos);
+					// Register onto DimensionDataStorage on the main server thread to avoid concurrent HashMap mutation
+					server.execute(() -> {
+						if(this.dimData.get(factory, fn) == null){
+							this.dimData.set(fn, data);
+						}
+					});
+				}
 				setDirty();
 				log.debug("Created RegionData[{}, {}]", regionPos.x(), regionPos.z());
 				return data;

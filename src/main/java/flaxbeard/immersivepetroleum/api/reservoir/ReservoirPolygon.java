@@ -4,10 +4,13 @@ import flaxbeard.immersivepetroleum.ImmersivePetroleum;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ColumnPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.WorldGenLevel;
 
 import javax.annotation.Nonnull;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -16,6 +19,10 @@ import java.util.Set;
 public class ReservoirPolygon{
 	
 	public static ReservoirPolygon make(Level level, ColumnPos start){
+		return new ReservoirPolygon(level, start);
+	}
+	
+	public static ReservoirPolygon make(WorldGenLevel level, ColumnPos start){
 		return new ReservoirPolygon(level, start);
 	}
 	
@@ -28,7 +35,23 @@ public class ReservoirPolygon{
 	ReservoirPolygon(Level level, ColumnPos start){
 		final Set<Location> TEMP = new HashSet<>(2600);
 		
-		scan(level, start, TEMP);
+		scan(level, null, start, TEMP);
+		
+		// Only keep outline
+		TEMP.removeIf(location -> !location.edge());
+		
+		makeDirectional(TEMP);
+		cullLines();
+		
+		this.poly.trimToSize();
+		
+		this.bounds = createBoundingBox();
+	}
+	
+	ReservoirPolygon(WorldGenLevel worldGen, ColumnPos start){
+		final Set<Location> TEMP = new HashSet<>(2600);
+		
+		scan(null, worldGen, start, TEMP);
 		
 		// Only keep outline
 		TEMP.removeIf(location -> !location.edge());
@@ -304,26 +327,36 @@ public class ReservoirPolygon{
 		return null;
 	}
 	
-	void scan(Level level, ColumnPos pos, final Set<Location> TEMP){
-		if(TEMP.contains(new Location(pos, false)) || ReservoirHandler.getValueOf(level, pos.x(), pos.z()) == -1)
-			return;
+	private static double getNoiseValue(Level level, WorldGenLevel worldGen, int x, int z){
+		return worldGen != null ? ReservoirHandler.getValueOf(worldGen, x, z) : ReservoirHandler.getValueOf(level, x, z);
+	}
+	
+	void scan(Level level, WorldGenLevel worldGen, ColumnPos start, final Set<Location> TEMP){
+		final Deque<ColumnPos> stack = new ArrayDeque<>();
+		stack.push(start);
 		
-		final ColumnPos p0 = new ColumnPos(pos.x() + 1, pos.z());
-		final ColumnPos p1 = new ColumnPos(pos.x() - 1, pos.z());
-		final ColumnPos p2 = new ColumnPos(pos.x(), pos.z() + 1);
-		final ColumnPos p3 = new ColumnPos(pos.x(), pos.z() - 1);
-		
-		boolean b0 = ReservoirHandler.getValueOf(level, p0.x(), p0.z()) == -1;
-		boolean b1 = ReservoirHandler.getValueOf(level, p1.x(), p1.z()) == -1;
-		boolean b2 = ReservoirHandler.getValueOf(level, p2.x(), p2.z()) == -1;
-		boolean b3 = ReservoirHandler.getValueOf(level, p3.x(), p3.z()) == -1;
-		
-		TEMP.add(new Location(pos, b0 | b1 | b2 | b3));
-		
-		scan(level, p0, TEMP);
-		scan(level, p1, TEMP);
-		scan(level, p2, TEMP);
-		scan(level, p3, TEMP);
+		while(!stack.isEmpty()){
+			ColumnPos pos = stack.pop();
+			if(TEMP.contains(new Location(pos, false)) || getNoiseValue(level, worldGen, pos.x(), pos.z()) == -1)
+				continue;
+			
+			final ColumnPos p0 = new ColumnPos(pos.x() + 1, pos.z());
+			final ColumnPos p1 = new ColumnPos(pos.x() - 1, pos.z());
+			final ColumnPos p2 = new ColumnPos(pos.x(), pos.z() + 1);
+			final ColumnPos p3 = new ColumnPos(pos.x(), pos.z() - 1);
+			
+			boolean b0 = getNoiseValue(level, worldGen, p0.x(), p0.z()) == -1;
+			boolean b1 = getNoiseValue(level, worldGen, p1.x(), p1.z()) == -1;
+			boolean b2 = getNoiseValue(level, worldGen, p2.x(), p2.z()) == -1;
+			boolean b3 = getNoiseValue(level, worldGen, p3.x(), p3.z()) == -1;
+			
+			TEMP.add(new Location(pos, b0 | b1 | b2 | b3));
+			
+			if(!b3) stack.push(p3);
+			if(!b2) stack.push(p2);
+			if(!b1) stack.push(p1);
+			if(!b0) stack.push(p0);
+		}
 	}
 	
 	private record Location(@Nonnull ColumnPos pos, boolean edge){

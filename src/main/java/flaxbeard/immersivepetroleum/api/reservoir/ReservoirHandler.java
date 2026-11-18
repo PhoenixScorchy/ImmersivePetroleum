@@ -20,6 +20,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import javax.annotation.Nonnull;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * This takes care of dealing with generating, storing and caching (Faster access for regulary queried positions) reservoirs.
@@ -29,7 +30,7 @@ import java.util.Map;
 public class ReservoirHandler{
 	private static final Map<Pair<ResourceKey<Level>, ColumnPos>, Reservoir> CACHE = new HashMap<>();
 	
-	private static final Map<ResourceLocation, Map<ResourceLocation, Integer>> totalWeightMap = new HashMap<>();
+	private static final Map<ResourceLocation, Map<ResourceLocation, Integer>> totalWeightMap = new ConcurrentHashMap<>();
 	
 	/**
 	 * Gets the total weight of reservoir types for the given dimension ID and biome type
@@ -40,21 +41,26 @@ public class ReservoirHandler{
 	 */
 	public static int getTotalWeight(ResourceKey<Level> dimension, Holder<Biome> biome){
 		final ResourceLocation dimensionRL = dimension.location();
-		final ResourceLocation biomeRL = biome.getKey().location();
+		final ResourceLocation biomeRL = biome.unwrapKey().map(ResourceKey::location).orElse(null);
+		if(biomeRL == null){
+			return computeTotalWeight(dimension, biome);
+		}
 		
-		Map<ResourceLocation, Integer> map = totalWeightMap.computeIfAbsent(dimensionRL, k -> new HashMap<>());
+		Map<ResourceLocation, Integer> map = totalWeightMap.computeIfAbsent(dimensionRL, k -> new ConcurrentHashMap<>());
 		
-		return map.computeIfAbsent(biomeRL, r -> {
-			int totalWeight = 0;
-			for(RecipeHolder<ReservoirType> holder: ReservoirType.map.values()){
-				ReservoirType reservoir = holder.value();
-				
-				if(reservoir.getDimensions().isValid(dimension) && reservoir.getBiomes().isValid(biome)){
-					totalWeight += reservoir.weight;
-				}
+		return map.computeIfAbsent(biomeRL, r -> computeTotalWeight(dimension, biome));
+	}
+	
+	private static int computeTotalWeight(ResourceKey<Level> dimension, Holder<Biome> biome){
+		int totalWeight = 0;
+		for(RecipeHolder<ReservoirType> holder: ReservoirType.map.values()){
+			ReservoirType reservoir = holder.value();
+			
+			if(reservoir.getDimensions().isValid(dimension) && reservoir.getBiomes().isValid(biome)){
+				totalWeight += reservoir.weight;
 			}
-			return totalWeight;
-		});
+		}
+		return totalWeight;
 	}
 	
 	/** May only be called on the server-side. Returns null on client-side. */
@@ -107,8 +113,9 @@ public class ReservoirHandler{
 		return reservoir;
 	}
 	
-	private static long lastSeed;
-	private static PerlinSimplexNoise generator;
+	private static final Object GENERATOR_LOCK = new Object();
+	private static volatile long lastSeed;
+	private static volatile PerlinSimplexNoise generator;
 	
 	static final double scale = 0.015625D;
 	static final double d0 = 2 / 3D;
@@ -126,7 +133,20 @@ public class ReservoirHandler{
 		if(!level.isClientSide && level instanceof WorldGenLevel worldGen)
 			initGenerator(worldGen);
 		
-		double noise = Math.abs(generator.getValue(x * scale, z * scale, false));
+		return sampleNoise(x, z);
+	}
+	
+	public static double getValueOf(@Nonnull WorldGenLevel worldGen, int x, int z){
+		initGenerator(worldGen);
+		return sampleNoise(x, z);
+	}
+	
+	private static double sampleNoise(int x, int z){
+		PerlinSimplexNoise gen = generator;
+		if(gen == null)
+			return -1D;
+		
+		double noise = Math.abs(gen.getValue(x * scale, z * scale, false));
 		if(noise > d0)
 			return (noise - d0) / d1;
 		
@@ -134,9 +154,14 @@ public class ReservoirHandler{
 	}
 	
 	public static void initGenerator(WorldGenLevel world){
-		if(generator == null || world.getSeed() != lastSeed){
-			lastSeed = world.getSeed();
-			generator = new PerlinSimplexNoise(new WorldgenRandom(new LegacyRandomSource(lastSeed)), ImmutableList.of(0));
+		long seed = world.getSeed();
+		if(generator == null || seed != lastSeed){
+			synchronized(GENERATOR_LOCK){
+				if(generator == null || seed != lastSeed){
+					generator = new PerlinSimplexNoise(new WorldgenRandom(new LegacyRandomSource(seed)), ImmutableList.of(0));
+					lastSeed = seed;
+				}
+			}
 		}
 	}
 	

@@ -11,6 +11,7 @@ import flaxbeard.immersivepetroleum.api.crafting.LubricatedHandler.LubricatedTil
 import flaxbeard.immersivepetroleum.api.reservoir.ReservoirHandler;
 import flaxbeard.immersivepetroleum.common.cfg.IPServerConfig;
 import flaxbeard.immersivepetroleum.common.datastorage.reservoir.ReservoirRegionDataStorage;
+import flaxbeard.immersivepetroleum.common.world.FeatureReservoir;
 import flaxbeard.immersivepetroleum.common.entity.MotorboatEntity;
 import flaxbeard.immersivepetroleum.common.fluids.NapalmFluid;
 import flaxbeard.immersivepetroleum.common.util.IPEffects;
@@ -69,7 +70,9 @@ public class CommonEventHandler{
 	public void onUnload(LevelEvent.Unload event){
 		if(!event.getLevel().isClientSide()){
 			IPSaveData.markDirty();
-			ReservoirRegionDataStorage.get().markAllDirty();
+			ReservoirRegionDataStorage storage = ReservoirRegionDataStorage.get();
+			if(storage != null)
+				storage.markAllDirty();
 		}
 	}
 	
@@ -77,6 +80,7 @@ public class CommonEventHandler{
 	public void onServerStopped(ServerStoppedEvent event){
 		ImmersivePetroleum.log.debug("[ReservoirHandler]: Clearing Cache...");
 		ReservoirHandler.clearCache();
+		FeatureReservoir.clearGeneratedChunks();
 	}
 	
 	@SubscribeEvent
