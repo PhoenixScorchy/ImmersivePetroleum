@@ -152,7 +152,7 @@ public class ReservoirCommand{
 		for(int z = IAABB.zMin() + 1;z < IAABB.zMax();z++){
 			for(int x = IAABB.xMin() + 1;x < IAABB.xMax();x++){
 				double cPressure;
-				if(closestIsland.getPolygon().contains(x, z) && (cPressure = ReservoirHandler.getValueOf(source.getLevel(), x, z)) > hPressure){
+				if(closestIsland.getPolygon().contains(x, z) && (cPressure = ReservoirHandler.getValueOf((Level) source.getLevel(), x, z)) > hPressure){
 					hPressure = cPressure;
 					p = new ColumnPos(x, z);
 				}
